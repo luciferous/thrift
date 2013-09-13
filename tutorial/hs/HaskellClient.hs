@@ -31,6 +31,7 @@ import Thrift.Transport.Handle
 import Thrift.Server
 
 import Data.Maybe
+import Data.Text.Lazy as L
 import Text.Printf
 import Network
 
@@ -67,7 +68,7 @@ main = do
   printf "15-10=%d\n" diff
 
   log <- SClient.getStruct client 1
-  printf "Check log: %s\n"  $ fromJust $ f_SharedStruct_value log
+  printf "Check log: %s\n"  $ L.unpack $ fromJust $ f_SharedStruct_value log
 
   -- Close!
   tClose transport

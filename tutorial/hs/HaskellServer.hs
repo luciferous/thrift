@@ -35,6 +35,7 @@ import Control.Concurrent.MVar
 import qualified Data.Map as M
 import Data.Map ((!))
 import Data.Monoid
+import Data.Text.Lazy as L
 
 data CalculatorHandler = CalculatorHandler {mathLog :: MVar (M.Map Int SharedStruct)}
 
@@ -45,7 +46,7 @@ newCalculatorHandler = do
 instance SharedService_Iface CalculatorHandler where
   getStruct self k = do
     myLog <- readMVar (mathLog self)
-    return $ (myLog ! (fromJust k))
+    return $ (myLog ! (fromIntegral (fromJust k)))
 
 
 instance Calculator_Iface CalculatorHandler where
@@ -70,14 +71,14 @@ instance Calculator_Iface CalculatorHandler where
                     if num2 work == 0 then
                         throw $
                               InvalidOperation {
-                                 f_InvalidOperation_what = Just $ fromEnum $ op work,
-                                 f_InvalidOperation_why = Just "Cannot divide by 0"
+                                 f_InvalidOperation_what = Just $ fromIntegral $ fromEnum $ op work,
+                                 f_InvalidOperation_why = Just $ L.pack $ "Cannot divide by 0"
                                             }
                     else
                         num1 work `div` num2 work
 
-    let logEntry = SharedStruct (Just logid) (Just (show val))
-    modifyMVar_ (mathLog self) $ return .(M.insert logid logEntry)
+    let logEntry = SharedStruct (Just logid) (Just (L.pack (show val)))
+    modifyMVar_ (mathLog self) $ return .(M.insert (fromIntegral logid) logEntry)
 
     return val
 
