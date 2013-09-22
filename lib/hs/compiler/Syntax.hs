@@ -101,9 +101,9 @@ function = do
     ow <- optionMaybe (symbol "oneway" *> return True)
     ft <- symbol "void" *> return Nothing <|> fmap Just fieldType
     ident <- identifier
-    fields <- parens (many field) <* optional comma
+    fields <- parens (many field)
     throws <- option [] (symbol "throws" *> parens (many field))
-    optional comma
+    optional listSeparator
     return $ Function ow ft ident fields throws
 
 definition :: Parser Definition
@@ -112,7 +112,7 @@ definition = const
          <|> exception
 --         <|> senum
          <|> try service
-         <|> struct
+         <|> try struct
          <|> typedef
          <?> "definitions"
   where
