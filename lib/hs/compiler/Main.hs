@@ -1,109 +1,88 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Prelude hiding (takeWhile)
-import Control.Applicative hiding (Const)
-import Data.Attoparsec.Combinator
-import Data.Attoparsec.Char8
-import Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B hiding (map)
-import System.Environment (getArgs)
+import Control.Applicative ((<$>),(<*),(<*>),(*>))
 import GHC.Conc (getNumProcessors, setNumCapabilities)
+import System.Environment (getArgs)
+import Text.Parsec
+import Text.Parsec.Combinator
+import Text.Parsec.Language (emptyDef)
+import Text.Parsec.String (parseFromFile, Parser)
+import qualified Text.Parsec.Token as P
+import System.IO.Unsafe (unsafePerformIO)
 
-type Identifier = ByteString
+import Types
 
-type Scope = ByteString
+import Prelude hiding (takeWhile)
 
-data Document   = Document [Header] [Definition]
-                  deriving Show
+lexer :: P.TokenParser st
+lexer = P.makeTokenParser emptyDef
 
-data Header     = Include ByteString
-                | CppInclude ByteString
-                | Namespace Scope Identifier
-                  deriving Show
+symbol = P.symbol lexer
+stringLiteral = P.stringLiteral lexer
+identifier = P.identifier lexer
+braces = P.braces lexer
+commaSep = P.commaSep lexer
+colon = P.colon lexer
+natural = P.natural lexer
+naturalOrFloat = P.naturalOrFloat lexer
 
-data Definition = Const FieldType Identifier ConstValue
-                | Typedef DefinitionType Identifier
-                | Enum [(Identifier, Maybe Int)]
-                | Senum Identifier [ByteString]
-                | Struct Identifier [Field]
-                | Exception Identifier [Field]
-                | Service Identifier (Maybe Parent) [Function]
-                  deriving Show
-
-type Parent     = Identifier
-
-data Field      = Field { _fieldId    :: Maybe Int
-                        , _fieldReq   :: Maybe Bool
-                        , _fieldType  :: FieldType
-                        , _fieldName  :: Identifier
-                        , _fieldValue :: Maybe ConstValue
-                        } deriving Show
-
-data Function   = Function { _fnOneway :: Maybe Bool
-                           , _fnType   :: Maybe FieldType
-                           , _fnName   :: Identifier
-                           , _fnThrows :: [Field]
-                           } deriving Show
-
-type FieldType  = ByteString
-type ConstValue = ByteString
-type DefinitionType = ByteString
-
-document :: Parser Document
-document = Document <$> (many1 header <* endOfLine)
-                    <*> (many1 definition <* endOfLine)
-
-header :: Parser Header
-header = Include    <$> ("include" .*> skipSpace *> literal)
-     <|> CppInclude <$> ("cpp_include" .*> skipSpace *> literal)
-     <|> Namespace  <$> ("namespace" .*> skipSpace *> scope)
-                    <*> (skipSpace *> identifier)
-
-literal :: Parser ByteString
-literal = char8 '"' *> takeTill (=='"')
-      <|> char8 '\'' *> takeTill (=='\'')
-
-identifier :: Parser Identifier
-identifier = B.cons <$> satisfy start <*> takeWhile rest
-  where
-    start = inClass "A-Za-z_"
-    rest  = inClass "0-9A-Za-z_"
-
-scope :: Parser Scope
-scope = string "hs"
-    <|> string "java"
-
-definition :: Parser Definition
-definition = constParser
-         <|> typedef
-         <|> enum
-         <|> senum
-         <|> struct
-         <|> exception
-         <|> service
-         <?> "unknown definition"
-  where
-    constParser = do 
-        ft    <- "const" .*> skipSpace *> fieldType
-        ident <- skipSpace *> identifier
-        val   <- skipSpace *> char '=' *> skipSpace *> literal
-        return $ Const ft ident val
-    typedef = return $ Senum "foo" []
-    enum = return $ Senum "foo" []
-    senum = return $ Senum "foo" []
-    struct = return $ Senum "foo" []
-    exception = return $ Senum "foo" []
-    service = return $ Senum "foo" []
+lang :: Parser String
+lang = symbol "hs" <|> symbol "cpp" <|> symbol "java"
 
 fieldType :: Parser FieldType
 fieldType = identifier
 
+constValue :: Parser ConstValue
+constValue = fmap ConstNumber naturalOrFloat
+         <|> fmap ConstLiteral stringLiteral
+
+field :: Parser Field
+field = do
+    fid   <- optionMaybe natural <* colon
+    req   <- optionMaybe $ symbol "required" *> return True
+                       <|> symbol "optional" *> return False
+    fType <- fieldType
+    ident <- identifier
+    val   <- optionMaybe constValue
+    return $ Field fid req fType ident val
+
+definition :: Parser Definition
+definition = constParser
+--         <|> typedef
+--         <|> enum
+--         <|> senum
+         <|> struct
+--         <|> exception
+--         <|> service
+--         <?> "unknown definition"
+  where
+    constParser = symbol "const" *> do 
+        ft    <- fieldType
+        ident <- identifier <* symbol "="
+        val   <- constValue
+        return $ Const ft ident val
+--    typedef = return $ Senum "foo" []
+--    enum = return $ Senum "foo" []
+--    senum = return $ Senum "foo" []
+    struct = symbol "struct" *> do
+        ident <- identifier
+        fields <- braces (commaSep field)
+        return $ Struct ident fields
+--    exception = return $ Senum "foo" []
+--    service = return $ Senum "foo" []
+
+header :: Parser Header
+header = Include    <$> (symbol "include" *> stringLiteral)
+     <|> CppInclude <$> (symbol "cpp_include" *> stringLiteral)
+     <|> Namespace  <$> (symbol "namespace" *> lang) <*> identifier
+
+document :: Parser Document
+document = Document <$> many (try header) <*> many definition
+
 compile :: [FilePath] -> IO ()
 compile files = do
-    contents <- mapM B.readFile files
-    --let results = map (parse document) contents
-    let results = map (parse header) contents
+    results <- mapM (parseFromFile document) files
     putStrLn (show results)
     return ()
 
