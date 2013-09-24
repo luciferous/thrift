@@ -1,79 +1,131 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards #-}
+
 module Generator where
 
-import Prelude hiding (const)
+import Prelude hiding (const, mod)
 
-import Data.List (intercalate)
-import Language.Haskell.Exts.Parser (parseModule, ParseResult(..))
+import Data.Char (isLower)
+import Data.Maybe (maybeToList)
 import Language.Haskell.Exts.Pretty (prettyPrint)
-import Text.Printf (printf)
+import Language.Haskell.Exts.SrcLoc (noLoc)
+import qualified Language.Haskell.Exts.Syntax as S
 
 import Types
 
-toHask :: BaseType -> String
-toHask "binary" = "String"
-toHask "bool"   = "Bool"
-toHask "byte"   = "Char"
-toHask "string" = "String"
-toHask "i64"    = "Int64"
-toHask "i32"    = "Int32"
-toHask x = x
+typeDecl :: Identifier -> DefinitionType -> S.Decl
+typeDecl ident d = S.TypeDecl noLoc (S.Ident ident) [] (toType d)
+
+recDecl :: Identifier -> [Field] -> S.Decl
+recDecl ident fields = S.DataDecl noLoc
+                                  S.DataType
+                                  context
+                                  (S.Ident ident)
+                                  tyVarBind
+                                  [qualConDecl]
+                                  deriving_
+  where
+    context     = []
+    deriving_   = []
+    tyVarBind   = []
+    qualConDecl = S.QualConDecl noLoc
+                                tyVarBind'
+                                context'
+                                conDecl
+      where
+        tyVarBind'        = []
+        context'          = []
+        conDecl           = S.RecDecl (S.Ident ident) (map mkField fields)
+        mkField Field{..} = ( [S.Ident ("_" ++ _fieldName)]
+                            , S.UnBangedTy (toType _fieldType)
+                            )
+
+mapType :: String -> FieldType -> FieldType -> S.Type
+mapType m k v = S.TyApp (S.TyApp (toType m) (toType k)) (toType v)
+
+setType :: String -> FieldType -> S.Type
+setType s a = S.TyApp (toType s) (toType a)
+
+listType :: FieldType -> S.Type
+listType = S.TyList . toType
+
+class Typeable a where
+    toType :: a -> S.Type
+
+instance Typeable a => Typeable (Maybe a) where
+    toType Nothing  = toType "()"
+    toType (Just x) = toType x
+
+instance Typeable FieldType where
+    toType (ContainerType x) = toType x
+    toType (BaseType x)      = toType x
+    toType (Identifier x)    = toType x
+
+instance Typeable ContainerType where
+    toType (MapType _ (k, v)) = mapType "HashMap" k v
+    toType (SetType _ t)      = setType "HashSet" t
+    toType (ListType t _)     = listType t
+
+instance Typeable DefinitionType where
+    toType (Left a)  = toType a
+    toType (Right b) = toType b
+
+instance Typeable String where
+    toType t = if isLower . head . mod $ t
+               then S.TyVar . S.Ident . mod $ t
+               else S.TyCon . S.UnQual . S.Ident . mod $ t
+      where mod "binary" = "ByteString"
+            mod "bool"   = "Bool"
+            mod "byte"   = "Char"
+            mod "double" = "Double"
+            mod "i16"    = "Int16"
+            mod "i32"    = "Int32"
+            mod "i64"    = "Int64"
+            mod "string" = "String"
+            mod t'       = t'
+
+toExp :: ConstValue -> S.Exp
+toExp (ConstLiteral s)        = S.Lit . S.String $ s
+toExp (ConstIdentifier s)     = S.Var . S.UnQual . S.Ident $ s
+toExp (ConstNumber (Left i))  = S.Lit . S.Int $ i
+toExp (ConstNumber (Right d)) = S.Lit . S.Frac . toRational $ d
+
+patBind :: FieldType -> Identifier -> ConstValue -> S.Decl
+patBind t ident val = S.PatBind noLoc
+                                (S.PVar . S.Ident $ ident)
+                                (Just . toType $ t)
+                                (S.UnGuardedRhs . toExp $ val)
+                                (S.BDecls bindingGroup)
+  where bindingGroup = []
+
+classDecl :: Identifier -> Maybe Parent -> [Function] -> S.Decl
+classDecl ident p fs = S.ClassDecl noLoc
+                                   context
+                                   (S.Ident ident)
+                                   [S.UnkindedVar (S.Ident "a")]
+                                   funDep
+                                   (map (S.ClsDecl . sig) fs)
+  where
+    classA           = (`S.ClassA` [S.TyVar . S.Ident $ "a"]) . S.UnQual . S.Ident
+    context          = map classA (maybeToList p)
+    funDep           = []
+    sig Function{..} = let types = (map getType _fnFields) ++ [(toType _fnType)]
+                        in S.TypeSig noLoc
+                                     [S.Ident _fnName]
+                                     (foldr1 S.TyFun types)
+      where getType Field{..} = toType _fieldType
 
 class Generator a where
-    gen :: a -> String
+    gen :: a -> S.Decl
 
 instance Generator Definition where
-    gen (Typedef dtype ident) =
-        printf "type %s = %s\n" ident (toHask (gen dtype))
-    gen (Const ft ident val) = unlines
-        [ ident ++ " :: " ++ gen ft
-        , ident ++ " = " ++ gen val
-        ]
-    gen (Service ident _ funcs) = ""
-    gen (Struct ident []) = "data " ++ ident
-    gen (Struct ident fields) =
-        printf "data %s = %s {%s}\n" ident ident $ gen (", ", fields)
-    gen _ = ""
+    gen (Typedef t ident) = typeDecl ident t
+    gen (Struct ident fields) = recDecl ident fields
+    gen (Const t ident val) = patBind t ident val
+    gen (Service ident parent funcs) = classDecl ident parent funcs
 
-instance Generator g => Generator [g] where
-    gen gs = foldr (++) "" (map gen gs)
-
-instance Generator g => Generator (String, [g]) where
-    gen (d, gs) = intercalate d (map gen gs)
-
-instance Generator Field where
-    gen Field{..} = printf "_%s :: %s" _fieldName (gen _fieldType)
-
-instance Generator DefinitionType where
-    gen (Left baseType) = baseType
-    gen (Right contType) = gen contType
-
-instance Generator FieldType where
-    gen (Identifier t) = t
-    gen (BaseType t) = toHask t
-    gen (ContainerType t) = gen t
-
-instance Generator ContainerType where
-    gen (MapType _ (k, v)) = printf "[(%s, %s)]" (gen k) (gen v)
-    gen (SetType _ ft) = printf "[%s]" (gen ft)
-    gen (ListType ft _) = printf "[%s]" (gen ft)
-
-instance Generator ConstValue where
-    gen (ConstNumber (Left x)) = show x
-    gen (ConstNumber (Right x)) = show x
-    gen (ConstLiteral s) = show s
-    gen (ConstIdentifier i) = i
-
-exts :: String
-exts = unlines $ map wrap [ "EmptyDataDecls" ]
-  where
-    wrap x = "{-# LANGUAGE " ++ x ++ " #-}"
+    gen x = typeDecl "unknown:" (Left . show $ x)
 
 generate :: Document -> String
-generate (Document _ defs) =
-    let p1 = exts ++ "\n" ++ (gen ("\n", defs))
-        p2 = parseModule p1
-     in case p2 of
-            ParseOk p -> prettyPrint p
-            ParseFailed loc err -> p1 ++ "\n\n" ++ err ++ "\n\n" ++ (show loc)
+generate (Document _ defs) = prettyPrint mod
+  where mod = S.Module noLoc (S.ModuleName "Main") [] Nothing Nothing [] (map gen defs)
