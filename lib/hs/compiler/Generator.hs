@@ -148,15 +148,16 @@ instance Generator Definition where
 generate :: Document -> String
 generate (Document _ defs) = prettyPrint mod
   where mod  = S.Module noLoc
-                        (S.ModuleName "Main")
+                        (S.ModuleName "Types")
                         []
                         Nothing
                         Nothing
                         []
-                        ((map gen). (filter predicate) $ defs)
-        predicate (Typedef _ _)   = False
-        predicate (Struct _ _)    = False
-        predicate (Const _ _ _)   = False
-        predicate (Service _ _ _) = False
-        predicate (Enum _ _)      = True
+                        ((concatMap gen) . (filter predicate) $ defs)
+        --predicate (Typedef _ _)   = True
+        --predicate (Struct _ _)    = True
+        --predicate (Const _ _ _)   = True
+        --predicate (Service _ _ _) = True
+        --predicate (Enum _ _)      = False
+        --predicate (Exception _ _) = True
         predicate _ = True
