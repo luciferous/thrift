@@ -108,7 +108,7 @@ classDecl ident p fs = S.ClassDecl noLoc
     context          = map classA (maybeToList p)
     funDep           = []
     sig Function{..} = let types = (map getType _fnFields) ++ [(toType _fnType)]
-                        in typeSig ident (foldr1 S.TyFun types)
+                        in typeSig _fnName (foldr1 S.TyFun types)
       where getType Field{..} = toType _fieldType
 
 dataDeclHelper :: Identifier -> [S.Deriving] -> [S.QualConDecl] -> S.Decl
