@@ -17,17 +17,9 @@ typeDecl :: Identifier -> DefinitionType -> S.Decl
 typeDecl ident d = S.TypeDecl noLoc (S.Ident ident) [] (toType d)
 
 recDecl :: Identifier -> [Field] -> S.Decl
-recDecl ident fields = S.DataDecl noLoc
-                                  S.DataType
-                                  context
-                                  (S.Ident ident)
-                                  tyVarBind
-                                  [qualConDecl]
-                                  deriving_
+recDecl ident fields = dataDeclHelper ident deriv [qualConDecl]
   where
-    context     = []
-    deriving_   = []
-    tyVarBind   = []
+    deriv       = []
     qualConDecl = S.QualConDecl noLoc
                                 tyVarBind'
                                 context'
@@ -115,6 +107,27 @@ classDecl ident p fs = S.ClassDecl noLoc
                                      (foldr1 S.TyFun types)
       where getType Field{..} = toType _fieldType
 
+dataDeclHelper :: Identifier -> [S.Deriving] -> [S.QualConDecl] -> S.Decl
+dataDeclHelper ident deriv qcds = S.DataDecl noLoc
+                                       S.DataType
+                                       context
+                                       (S.Ident ident)
+                                       tyVarBind
+                                       qcds
+                                       deriv
+  where
+    context   = []
+    tyVarBind = []
+
+enumDecl :: Identifier -> [(Identifier, Maybe Integer)] -> S.Decl
+enumDecl ident = dataDeclHelper ident [deriv] . map (qualConDecl . fst)
+  where
+    deriv       = (S.UnQual . S.Ident $ "Enum", [])
+    qualConDecl = (S.QualConDecl noLoc tyVarBind context) . conDecl
+      where tyVarBind = []
+            context   = []
+            conDecl   = (`S.ConDecl` []) . S.Ident
+
 class Generator a where
     gen :: a -> S.Decl
 
@@ -123,9 +136,22 @@ instance Generator Definition where
     gen (Struct ident fields) = recDecl ident fields
     gen (Const t ident val) = patBind t ident val
     gen (Service ident parent funcs) = classDecl ident parent funcs
+    gen (Enum ident maps) = enumDecl ident maps
 
     gen x = typeDecl "unknown:" (Left . show $ x)
 
 generate :: Document -> String
 generate (Document _ defs) = prettyPrint mod
-  where mod = S.Module noLoc (S.ModuleName "Main") [] Nothing Nothing [] (map gen defs)
+  where mod  = S.Module noLoc
+                        (S.ModuleName "Main")
+                        []
+                        Nothing
+                        Nothing
+                        []
+                        ((map gen). (filter predicate) $ defs)
+        predicate (Typedef _ _)   = False
+        predicate (Struct _ _)    = False
+        predicate (Const _ _ _)   = False
+        predicate (Service _ _ _) = False
+        predicate (Enum _ _)      = True
+        predicate _ = True
