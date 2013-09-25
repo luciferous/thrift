@@ -82,13 +82,16 @@ toExp (ConstIdentifier s)     = S.Var . S.UnQual . S.Ident $ s
 toExp (ConstNumber (Left i))  = S.Lit . S.Int $ i
 toExp (ConstNumber (Right d)) = S.Lit . S.Frac . toRational $ d
 
-patBind :: FieldType -> Identifier -> ConstValue -> S.Decl
-patBind t ident val = S.PatBind noLoc
+patBind :: Identifier -> ConstValue -> S.Decl
+patBind ident val = S.PatBind noLoc
                                 (S.PVar . S.Ident $ ident)
-                                (Just . toType $ t)
+                                Nothing
                                 (S.UnGuardedRhs . toExp $ val)
                                 (S.BDecls bindingGroup)
   where bindingGroup = []
+
+typeSig :: Identifier -> S.Type -> S.Decl
+typeSig ident = S.TypeSig noLoc [S.Ident ident]
 
 classDecl :: Identifier -> Maybe Parent -> [Function] -> S.Decl
 classDecl ident p fs = S.ClassDecl noLoc
@@ -102,9 +105,7 @@ classDecl ident p fs = S.ClassDecl noLoc
     context          = map classA (maybeToList p)
     funDep           = []
     sig Function{..} = let types = (map getType _fnFields) ++ [(toType _fnType)]
-                        in S.TypeSig noLoc
-                                     [S.Ident _fnName]
-                                     (foldr1 S.TyFun types)
+                        in typeSig ident (foldr1 S.TyFun types)
       where getType Field{..} = toType _fieldType
 
 dataDeclHelper :: Identifier -> [S.Deriving] -> [S.QualConDecl] -> S.Decl
@@ -129,17 +130,17 @@ enumDecl ident = dataDeclHelper ident [deriv] . map (qualConDecl . fst)
             conDecl   = (`S.ConDecl` []) . S.Ident
 
 class Generator a where
-    gen :: a -> S.Decl
+    gen :: a -> [S.Decl]
 
 instance Generator Definition where
-    gen (Typedef t ident) = typeDecl ident t
-    gen (Struct ident fields) = recDecl ident fields
-    gen (Const t ident val) = patBind t ident val
-    gen (Service ident parent funcs) = classDecl ident parent funcs
-    gen (Enum ident maps) = enumDecl ident maps
-    gen (Exception ident fields) = recDecl ident fields
+    gen (Typedef t ident) = [typeDecl ident t]
+    gen (Struct ident fields) = [recDecl ident fields]
+    gen (Const t ident val) = [typeSig ident (toType t), patBind ident val]
+    gen (Service ident parent funcs) = [classDecl ident parent funcs]
+    gen (Enum ident maps) = [enumDecl ident maps]
+    gen (Exception ident fields) = [recDecl ident fields]
 
-    gen x = typeDecl "unknown:" (Left . show $ x)
+    gen x = [typeDecl "unknown:" (Left . show $ x)]
 
 generate :: Document -> String
 generate (Document _ defs) = prettyPrint mod
