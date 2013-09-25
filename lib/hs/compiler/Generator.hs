@@ -137,6 +137,7 @@ instance Generator Definition where
     gen (Const t ident val) = patBind t ident val
     gen (Service ident parent funcs) = classDecl ident parent funcs
     gen (Enum ident maps) = enumDecl ident maps
+    gen (Exception ident fields) = recDecl ident fields
 
     gen x = typeDecl "unknown:" (Left . show $ x)
 
