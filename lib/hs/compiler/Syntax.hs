@@ -1,10 +1,11 @@
+{-# OPTIONS_GHC -fno-warn-missing-signatures #-}
+
 module Syntax where
 
 import Prelude hiding (const, takeWhile)
 
 import Control.Applicative ((<$>),(<*),(<*>),(*>))
 import Text.Parsec
-import Text.Parsec.Combinator
 import Text.Parsec.Language (emptyDef)
 import Text.Parsec.String (Parser)
 import qualified Text.Parsec.Token as P
@@ -21,6 +22,7 @@ lexer = P.makeTokenParser $ emptyDef
 
 angles = P.angles lexer
 braces = P.braces lexer
+brackets = P.brackets lexer
 colon = P.colon lexer
 comma = P.comma lexer
 commaSep = P.commaSep lexer
@@ -32,6 +34,13 @@ semi = P.semi lexer
 stringLiteral = P.stringLiteral lexer
 symbol = P.symbol lexer
 whiteSpace = P.whiteSpace lexer
+
+listLiteral :: Parser [ConstValue]
+listLiteral = brackets $ many $ constValue <* optional listSeparator
+
+mapLiteral :: Parser [(ConstValue, ConstValue)]
+mapLiteral =  braces $ many $ tuple <* optional listSeparator
+  where tuple = (,) <$> (constValue <* symbol ":") <*> constValue
 
 listSeparator :: Parser String
 listSeparator = comma <|> semi
@@ -48,6 +57,8 @@ constValue :: Parser ConstValue
 constValue = fmap ConstNumber naturalOrFloat
          <|> fmap ConstLiteral stringLiteral
          <|> fmap ConstIdentifier identifier
+         <|> fmap ConstList listLiteral
+         <|> fmap ConstMap mapLiteral
 
 field :: Parser Field
 field = do
@@ -110,7 +121,6 @@ definition :: Parser Definition
 definition = const
          <|> try enum
          <|> exception
---         <|> senum
          <|> try service
          <|> try struct
          <|> typedef
@@ -134,7 +144,6 @@ definition = const
             optional comma
             return $ (key, val)
         return $ Enum ident items
---    senum = return $ Senum "foo" []
     struct = symbol "struct" *> do
         ident <- identifier
         fields <- braces (many field)

@@ -81,6 +81,9 @@ toExp (ConstLiteral s)        = S.Lit . S.String $ s
 toExp (ConstIdentifier s)     = S.Var . S.UnQual . S.Ident $ s
 toExp (ConstNumber (Left i))  = S.Lit . S.Int $ i
 toExp (ConstNumber (Right d)) = S.Lit . S.Frac . toRational $ d
+toExp (ConstList cs)          = S.List . map toExp $ cs
+toExp (ConstMap ps)           = S.List . map tuplize $ ps
+  where tuplize (a, b) = S.Tuple S.Boxed (map toExp [a,b])
 
 patBind :: Identifier -> ConstValue -> S.Decl
 patBind ident val = S.PatBind noLoc

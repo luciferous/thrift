@@ -49,6 +49,8 @@ type BaseType = String
 data ConstValue = ConstNumber (Either Integer Double)
                 | ConstLiteral String
                 | ConstIdentifier Identifier
+                | ConstList [ConstValue]
+                | ConstMap [(ConstValue, ConstValue)]
                   deriving Show
 
 type CppType = String
